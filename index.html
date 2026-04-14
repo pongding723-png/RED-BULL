@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Portrait Fix Pro - AI 人像深度修復</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { background-color: #0a0a0a; color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .touch-none { touch-action: none; }
+        .custom-slider {
+            -webkit-appearance: none;
+            height: 4px;
+            background: #262626;
+            border-radius: 2px;
+            outline: none;
+        }
+        .custom-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #e11d48;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(225, 29, 72, 0.4);
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+        .animate-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        #canvas-overlay { cursor: crosshair; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body class="fixed inset-0 flex flex-col overflow-hidden">
+
+    <!-- 頂部導覽列 -->
+    <header class="h-14 border-b border-white/10 flex justify-between items-center px-4 bg-black/50 backdrop-blur-xl shrink-0 z-50">
+        <div class="flex items-center gap-2">
+            <div class="bg-rose-600 p-1.5 rounded-lg shadow-lg">
+                <i data-lucide="user" class="text-white w-5 h-5"></i>
+            </div>
+            <h1 class="text-sm font-black tracking-tighter uppercase">Portrait Fix Pro</h1>
+        </div>
+        
+        <div class="flex items-center gap-2">
+            <button id="btn-reset" class="p-2 text-neutral-500 hover:text-white transition-colors hidden">
+                <i data-lucide="trash-2" class="w-5 h-5"></i>
+            </button>
+            <label class="bg-white text-black px-4 py-1.5 rounded-full text-xs font-bold cursor-pointer active:scale-95 transition-all flex items-center gap-2">
+                <i data-lucide="upload" class="w-4 h-4"></i> <span>上傳素材</span>
+                <input type="file" id="file-input" class="hidden" accept="image/*,video/*">
+            </label>
+        </div>
+    </header>
+
+    <div class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        <!-- 側邊模式選擇 -->
+        <aside class="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/5 bg-zinc-900/30 p-4 flex flex-col gap-6 z-40">
+            <div>
+                <h3 class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">修復模式</h3>
+                <div class="grid grid-cols-1 gap-2">
+                    <button data-mode="face" class="mode-btn flex items-center gap-3 p-3 rounded-xl border border-rose-500 bg-rose-600/10 text-rose-500 shadow-lg">
+                        <i data-lucide="zap" class="w-4 h-4"></i>
+                        <div class="text-left">
+                            <p class="text-xs font-bold">人臉細節重構</p>
+                            <p class="text-[9px] opacity-60">優化五官與質感</p>
+                        </div>
+                    </button>
+                    
+                    <button data-mode="body" class="mode-btn flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-zinc-900 text-zinc-400 hover:bg-zinc-800">
+                        <i data-lucide="user" class="w-4 h-4"></i>
+                        <div class="text-left">
+                            <p class="text-xs font-bold">人體結構還原</p>
+                            <p class="text-[9px] opacity-60">優化肢體與肌肉</p>
+                        </div>
+                    </button>
+
+                    <button data-mode="general" class="mode-btn flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-zinc-900 text-zinc-400 hover:bg-zinc-800">
+                        <i data-lucide="layers" class="w-4 h-4"></i>
+                        <div class="text-left">
+                            <p class="text-xs font-bold">通用背景修補</p>
+                            <p class="text-[9px] opacity-60">適用非人像區</p>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
+            <div class="hidden md:block">
+                <h3 class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">筆觸大小 (<span id="brush-val">35</span>px)</h3>
+                <input type="range" id="brush-slider" min="10" max="120" value="35" class="w-full custom-slider">
+            </div>
+
+            <div class="mt-auto bg-rose-900/10 p-3 rounded-xl border border-rose-900/20">
+                <div class="flex gap-2 mb-1 items-center">
+                    <i data-lucide="info" class="text-rose-400 w-3 h-3"></i>
+                    <span class="text-[10px] font-bold text-rose-400 uppercase">修復建議</span>
+                </div>
+                <p class="text-[10px] text-zinc-400 leading-relaxed">
+                    塗抹區域請完全覆蓋遮蔽物。針對人像建議標記整個受影響的器官或部位。
+                </p>
+            </div>
+        </aside>
+
+        <!-- 預覽畫布區 -->
+        <main class="flex-1 relative bg-black flex items-center justify-center p-4 md:p-8 overflow-hidden">
+            <div id="status-bar" class="absolute top-6 left-1/2 -translate-x-1/2 z-30">
+                <div class="bg-zinc-900/90 border border-white/10 px-6 py-2 rounded-full backdrop-blur-xl shadow-2xl flex items-center gap-3 transition-all">
+                    <div id="status-dot" class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                    <span id="status-text" class="text-[11px] font-bold tracking-tight">準備進行人像修復</span>
+                </div>
+            </div>
+
+            <!-- 空狀態 -->
+            <div id="empty-state" class="text-center cursor-pointer group">
+                <div class="w-24 h-24 bg-zinc-900 rounded-[2rem] flex items-center justify-center mx-auto mb-6 border border-white/5 text-zinc-800 group-hover:text-rose-600 group-hover:border-rose-900/50 transition-all duration-500">
+                    <i data-lucide="user" class="w-10 h-10"></i>
+                </div>
+                <h2 class="text-xl font-black mb-2 tracking-tight">人像深度還原系統</h2>
+                <p class="text-zinc-500 text-xs max-w-[240px] leading-relaxed">
+                    上傳包含遮蔽物的素材，選擇適合的還原模式開始處理。
+                </p>
+            </div>
+
+            <!-- 編輯容器 -->
+            <div id="editor-container" class="relative hidden inline-block max-w-full max-h-full rounded-2xl overflow-hidden shadow-2xl">
+                <img id="source-img" class="max-h-[60vh] md:max-h-[70vh] block hidden" alt="source">
+                <video id="source-vid" class="max-h-[60vh] md:max-h-[70vh] block hidden" playsinline muted loop></video>
+                <canvas id="canvas-overlay" class="absolute inset-0 w-full h-full z-10 touch-none"></canvas>
+                
+                <div id="result-overlay" class="absolute inset-0 z-20 bg-black hidden animate-in">
+                    <img id="result-img" class="w-full h-full object-contain" alt="result">
+                    <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-rose-600 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-xl">
+                        <i data-lucide="check-circle-2" class="w-3 h-3"></i> AI Portrait Restored
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 底部功能列 -->
+    <footer class="h-28 md:h-24 bg-zinc-900 border-t border-white/10 p-4 flex flex-col md:flex-row items-center justify-between gap-4 shrink-0 z-50">
+        <div class="flex items-center gap-4 w-full md:w-auto">
+            <div class="md:hidden flex-1">
+                <input type="range" id="brush-slider-mobile" min="10" max="100" value="35" class="w-full custom-slider">
+            </div>
+            <button id="btn-clear" class="flex items-center gap-2 px-4 py-2 rounded-xl text-zinc-500 hover:text-white transition-colors">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i> <span class="text-xs font-bold">重新標記</span>
+            </button>
+        </div>
+
+        <div class="flex gap-3 w-full md:w-auto">
+            <div id="action-ready" class="flex gap-3 w-full md:w-auto">
+                <button id="btn-process" disabled class="w-full md:w-auto px-16 py-4 rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-3 transition-all bg-zinc-800 text-zinc-600 cursor-not-allowed">
+                    <i data-lucide="wand-2" class="w-5 h-5"></i> 執行還原
+                </button>
+            </div>
+            <div id="action-result" class="flex gap-3 w-full md:w-auto hidden">
+                <button id="btn-back" class="flex-1 md:flex-none px-8 py-3 rounded-2xl border border-white/10 text-xs font-black uppercase tracking-widest active:scale-95 transition-all">
+                    修正選區
+                </button>
+                <button id="btn-download" class="flex-1 md:flex-none px-8 py-3 rounded-2xl bg-white text-black text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all shadow-xl">
+                    <i data-lucide="download" class="w-4 h-4"></i> 儲存影像
+                </button>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // 配置
+        const apiKey = "";
+        let currentMode = 'face';
+        let brushSize = 35;
+        let isDrawing = false;
+        let mediaType = 'image';
+        let isProcessing = false;
+
+        // 元素選取
+        const els = {
+            fileInput: document.getElementById('file-input'),
+            emptyState: document.getElementById('empty-state'),
+            editorContainer: document.getElementById('editor-container'),
+            sourceImg: document.getElementById('source-img'),
+            sourceVid: document.getElementById('source-vid'),
+            canvas: document.getElementById('canvas-overlay'),
+            resultOverlay: document.getElementById('result-overlay'),
+            resultImg: document.getElementById('result-img'),
+            btnProcess: document.getElementById('btn-process'),
+            btnClear: document.getElementById('btn-clear'),
+            btnBack: document.getElementById('btn-back'),
+            btnDownload: document.getElementById('btn-download'),
+            btnReset: document.getElementById('btn-reset'),
+            statusText: document.getElementById('status-text'),
+            statusDot: document.getElementById('status-dot'),
+            brushSlider: document.getElementById('brush-slider'),
+            brushSliderMobile: document.getElementById('brush-slider-mobile'),
+            brushVal: document.getElementById('brush-val'),
+            actionReady: document.getElementById('action-ready'),
+            actionResult: document.getElementById('action-result')
+        };
+
+        const ctx = els.canvas.getContext('2d');
+
+        // 初始化圖示
+        lucide.createIcons();
+
+        // 模式切換
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentMode = btn.dataset.mode;
+                document.querySelectorAll('.mode-btn').forEach(b => {
+                    b.classList.remove('border-rose-500', 'bg-rose-600/10', 'text-rose-500', 'border-indigo-500', 'bg-indigo-600/10', 'text-indigo-500');
+                    b.classList.add('bg-zinc-900', 'border-white/5', 'text-zinc-400');
+                });
+                
+                const color = currentMode === 'face' ? 'rose' : (currentMode === 'body' ? 'indigo' : 'zinc');
+                btn.classList.remove('bg-zinc-900', 'border-white/5', 'text-zinc-400');
+                btn.classList.add(`border-${color}-500`, `bg-${color}-600/10`, `text-${color}-500`);
+                
+                updateProcessButton();
+            });
+        });
+
+        // 筆觸更新
+        const updateBrush = (val) => {
+            brushSize = parseInt(val);
+            els.brushVal.textContent = brushSize;
+            els.brushSlider.value = brushSize;
+            els.brushSliderMobile.value = brushSize;
+            setupCanvasStyle();
+        };
+        els.brushSlider.oninput = (e) => updateBrush(e.target.value);
+        els.brushSliderMobile.oninput = (e) => updateBrush(e.target.value);
+
+        function setupCanvasStyle() {
+            const ratio = els.canvas.width / els.canvas.clientWidth;
+            ctx.lineWidth = brushSize * ratio;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = 'rgba(255, 0, 80, 0.5)';
+        }
+
+        // 檔案處理
+        els.fileInput.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            mediaType = file.type.startsWith('video/') ? 'video' : 'image';
+            const url = URL.createObjectURL(file);
+
+            els.emptyState.classList.add('hidden');
+            els.editorContainer.classList.remove('hidden');
+            els.btnReset.classList.remove('hidden');
+            els.resultOverlay.classList.add('hidden');
+            els.actionReady.classList.remove('hidden');
+            els.actionResult.classList.add('hidden');
+
+            if (mediaType === 'image') {
+                els.sourceImg.src = url;
+                els.sourceImg.classList.remove('hidden');
+                els.sourceVid.classList.add('hidden');
+                els.sourceImg.onload = initCanvas;
+            } else {
+                els.sourceVid.src = url;
+                els.sourceVid.classList.remove('hidden');
+                els.sourceImg.classList.add('hidden');
+                els.sourceVid.onloadedmetadata = initCanvas;
+                els.sourceVid.play();
+            }
+            
+            els.statusText.textContent = '已載入素材，請塗抹遮蔽區域';
+            els.btnProcess.disabled = false;
+            els.btnProcess.classList.remove('bg-zinc-800', 'text-zinc-600', 'cursor-not-allowed');
+            els.btnProcess.classList.add('bg-rose-600', 'text-white', 'shadow-xl');
+        };
+
+        function initCanvas() {
+            const media = mediaType === 'image' ? els.sourceImg : els.sourceVid;
+            els.canvas.width = media.naturalWidth || media.videoWidth;
+            els.canvas.height = media.naturalHeight || media.videoHeight;
+            setupCanvasStyle();
+        }
+
+        // 繪圖邏輯
+        function getPos(e) {
+            const rect = els.canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: (clientX - rect.left) * (els.canvas.width / rect.width),
+                y: (clientY - rect.top) * (els.canvas.height / rect.height)
+            };
+        }
+
+        function start(e) {
+            if (isProcessing || !els.actionResult.classList.contains('hidden')) return;
+            isDrawing = true;
+            const pos = getPos(e);
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            if (e.cancelable) e.preventDefault();
+        }
+
+        function move(e) {
+            if (!isDrawing) return;
+            const pos = getPos(e);
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+            if (e.cancelable) e.preventDefault();
+        }
+
+        function end() { isDrawing = false; }
+
+        els.canvas.onmousedown = start;
+        window.onmousemove = move;
+        window.onmouseup = end;
+        els.canvas.ontouchstart = start;
+        els.canvas.ontouchmove = move;
+        els.canvas.ontouchend = end;
+
+        els.btnClear.onclick = () => ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
+        els.btnBack.onclick = () => {
+            els.resultOverlay.classList.add('hidden');
+            els.actionReady.classList.remove('hidden');
+            els.actionResult.classList.add('hidden');
+        };
+        els.btnReset.onclick = () => location.reload();
+
+        // 呼叫 Gemini API
+        async function fetchWithRetry(url, options, retries = 5, backoff = 1000) {
+            try {
+                const res = await fetch(url, options);
+                if (!res.ok) throw new Error('API Error');
+                return await res.json();
+            } catch (err) {
+                if (retries > 0) {
+                    await new Promise(r => setTimeout(r, backoff));
+                    return fetchWithRetry(url, options, retries - 1, backoff * 2);
+                }
+                throw err;
+            }
+        }
+
+        els.btnProcess.onclick = async () => {
+            if (isProcessing) return;
+            isProcessing = true;
+            els.statusText.textContent = `AI 正在進行${currentMode === 'face' ? '人臉' : '結構'}修復...`;
+            els.statusDot.classList.replace('bg-emerald-500', 'bg-rose-500');
+            els.statusDot.classList.add('animate-pulse');
+            els.btnProcess.innerHTML = `<i data-lucide="refresh-cw" class="w-5 h-5 animate-spin"></i> 處理中...`;
+            lucide.createIcons();
+
+            try {
+                // 合成影像
+                const tempCanvas = document.createElement('canvas');
+                const tctx = tempCanvas.getContext('2d');
+                tempCanvas.width = els.canvas.width;
+                tempCanvas.height = els.canvas.height;
+                tctx.drawImage(mediaType === 'image' ? els.sourceImg : els.sourceVid, 0, 0);
+                tctx.drawImage(els.canvas, 0, 0);
+                const base64 = tempCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+
+                const prompt = {
+                    face: "Focus on High-Fidelity Facial Reconstruction. The red area obscures a human face. Reconstruct the eyes, nose, mouth, and skin texture with extreme anatomical accuracy. Maintain facial symmetry.",
+                    body: "Focus on Human Body Structure. Reconstruct body proportions, muscle structure, and clothing folds naturally. Ensure anatomical accuracy.",
+                    general: "Remove stickers/mosaics in the red area and perform high-quality inpainting."
+                }[currentMode];
+
+                const data = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: `Task: AI Portrait Inpainting. ${prompt}` },
+                                { inlineData: { mimeType: "image/jpeg", data: base64 } }
+                            ]
+                        }],
+                        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+                    })
+                });
+
+                const output = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+
+                if (output) {
+                    els.resultImg.src = `data:image/jpeg;base64,${output}`;
+                    els.resultOverlay.classList.remove('hidden');
+                    els.actionReady.classList.add('hidden');
+                    els.actionResult.classList.remove('hidden');
+                    els.statusText.textContent = '修復完成！';
+                } else {
+                    throw new Error('No Image Data');
+                }
+
+            } catch (err) {
+                els.statusText.textContent = '處理失敗，請重試 (演示模式)';
+                setTimeout(() => {
+                    els.resultImg.src = tempCanvas.toDataURL(); // 回退
+                    els.resultOverlay.classList.remove('hidden');
+                    els.actionReady.classList.add('hidden');
+                    els.actionResult.classList.remove('hidden');
+                }, 1500);
+            } finally {
+                isProcessing = false;
+                els.statusDot.classList.replace('bg-rose-500', 'bg-emerald-500');
+                els.statusDot.classList.remove('animate-pulse');
+                updateProcessButton();
+            }
+        };
+
+        function updateProcessButton() {
+            els.btnProcess.innerHTML = `<i data-lucide="wand-2" class="w-5 h-5"></i> 執行${currentMode === 'face' ? '人臉' : (currentMode === 'body' ? '人體' : '通用')}重構`;
+            lucide.createIcons();
+        }
+
+        els.btnDownload.onclick = () => {
+            const a = document.createElement('a');
+            a.href = els.resultImg.src;
+            a.download = `portrait_fix_${Date.now()}.jpg`;
+            a.click();
+        };
+
+    </script>
+</body>
+</html>
